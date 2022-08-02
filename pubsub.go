@@ -10,6 +10,8 @@
 // all of them receive messages published on the topic.
 package pubsub
 
+import "github.com/bhbosman/goCommsDefinitions"
+
 type operation int
 
 const (
@@ -17,7 +19,7 @@ const (
 	subOnce
 	subOnceEach
 	pub
-	tryPub
+	//tryPub
 	unsub
 	unsubAll
 	closeTopic
@@ -33,50 +35,54 @@ type PubSub struct {
 type cmd struct {
 	op     operation
 	topics []string
-	ch     chan interface{}
+	ch     goCommsDefinitions.IPubSubBag
 	msg    interface{}
 }
 
 // New creates a new PubSub and starts a goroutine for handling operations.
 // The capacity of the channels created by Sub and SubOnce will be as specified.
 func New(capacity int) *PubSub {
-	ps := &PubSub{make(chan cmd), capacity}
+	ps := &PubSub{
+		cmdChan:  make(chan cmd, 2048),
+		capacity: capacity,
+		//fac:      &factory{},
+	}
 	go ps.start()
 	return ps
 }
 
 // Sub returns a channel on which messages published on any of
 // the specified topics can be received.
-func (ps *PubSub) Sub(topics ...string) chan interface{} {
-	return ps.sub(sub, topics...)
-}
+//func (ps *PubSub) Sub(topics ...string) IPubSubBag {
+//	return ps.sub(sub, topics...)
+//}
 
 // SubOnce is similar to Sub, but only the first message published, after subscription,
 // on any of the specified topics can be received.
-func (ps *PubSub) SubOnce(topics ...string) chan interface{} {
-	return ps.sub(subOnce, topics...)
-}
+//func (ps *PubSub) SubOnce(topics ...string) IPubSubBag {
+//	return ps.sub(subOnce, topics...)
+//}
 
 // SubOnceEach returns a channel on which callers receive, at most, one message
 // for each topic.
-func (ps *PubSub) SubOnceEach(topics ...string) chan interface{} {
-	return ps.sub(subOnceEach, topics...)
-}
+//func (ps *PubSub) SubOnceEach(topics ...string) IPubSubBag {
+//	return ps.sub(subOnceEach, topics...)
+//}
 
-func (ps *PubSub) sub(op operation, topics ...string) chan interface{} {
-	ch := make(chan interface{}, ps.capacity)
-	ps.cmdChan <- cmd{op: op, topics: topics, ch: ch}
-	return ch
-}
+//func (ps *PubSub) sub(op operation, topics ...string) IPubSubBag {
+//	ch := NewActiveObject(ps.capacity)
+//	ps.cmdChan <- cmd{op: op, topics: topics, ch: ch}
+//	return ch
+//}
 
 // AddSub adds subscriptions to an existing channel.
-func (ps *PubSub) AddSub(ch chan interface{}, topics ...string) {
+func (ps *PubSub) AddSub(ch goCommsDefinitions.IPubSubBag, topics ...string) {
 	ps.cmdChan <- cmd{op: sub, topics: topics, ch: ch}
 }
 
 // AddSubOnceEach adds subscriptions to an existing channel with SubOnceEach
 // behavior.
-func (ps *PubSub) AddSubOnceEach(ch chan interface{}, topics ...string) {
+func (ps *PubSub) AddSubOnceEach(ch goCommsDefinitions.IPubSubBag, topics ...string) {
 	ps.cmdChan <- cmd{op: subOnceEach, topics: topics, ch: ch}
 }
 
@@ -86,11 +92,26 @@ func (ps *PubSub) Pub(msg interface{}, topics ...string) {
 	ps.cmdChan <- cmd{op: pub, topics: topics, msg: msg}
 }
 
+// PubWithContext publishes the given message to all subscribers of
+// the specified topics.
+func (ps *PubSub) PubWithContext(
+	//ctx context.Context,
+	msg interface{},
+	topics ...string,
+) bool {
+	select {
+	case ps.cmdChan <- cmd{op: pub, topics: topics, msg: msg}:
+		return true
+	default:
+		return false
+	}
+}
+
 // TryPub publishes the given message to all subscribers of
 // the specified topics if the topic has buffer space.
-func (ps *PubSub) TryPub(msg interface{}, topics ...string) {
-	ps.cmdChan <- cmd{op: tryPub, topics: topics, msg: msg}
-}
+//func (ps *PubSub) TryPub(msg interface{}, topics ...string) {
+//	ps.cmdChan <- cmd{op: tryPub, topics: topics, msg: msg}
+//}
 
 // Unsub unsubscribes the given channel from the specified
 // topics. If no topic is specified, it is unsubscribed
@@ -99,7 +120,7 @@ func (ps *PubSub) TryPub(msg interface{}, topics ...string) {
 // Unsub must be called from a goroutine that is different from the subscriber.
 // The subscriber must consume messages from the channel until it reaches the
 // end. Not doing so can result in a deadlock.
-func (ps *PubSub) Unsub(ch chan interface{}, topics ...string) {
+func (ps *PubSub) Unsub(ch goCommsDefinitions.IPubSubBag, topics ...string) {
 	if len(topics) == 0 {
 		ps.cmdChan <- cmd{op: unsubAll, ch: ch}
 		return
@@ -122,8 +143,8 @@ func (ps *PubSub) Shutdown() {
 
 func (ps *PubSub) start() {
 	reg := registry{
-		topics:    make(map[string]map[chan interface{}]subType),
-		revTopics: make(map[chan interface{}]map[string]bool),
+		topics:    make(map[string]map[goCommsDefinitions.IPubSubBag]subType),
+		revTopics: make(map[goCommsDefinitions.IPubSubBag]map[string]bool),
 	}
 
 loop:
@@ -151,8 +172,8 @@ loop:
 			case subOnceEach:
 				reg.add(topic, cmd.ch, onceEach)
 
-			case tryPub:
-				reg.sendNoWait(topic, cmd.msg)
+			//case tryPub:
+			//	reg.sendNoWait(topic, cmd.msg)
 
 			case pub:
 				reg.send(topic, cmd.msg)
@@ -176,8 +197,8 @@ loop:
 // registry maintains the current subscription state. It's not
 // safe to access a registry from multiple goroutines simultaneously.
 type registry struct {
-	topics    map[string]map[chan interface{}]subType
-	revTopics map[chan interface{}]map[string]bool
+	topics    map[string]map[goCommsDefinitions.IPubSubBag]subType
+	revTopics map[goCommsDefinitions.IPubSubBag]map[string]bool
 }
 
 type subType int
@@ -188,9 +209,9 @@ const (
 	normal
 )
 
-func (reg *registry) add(topic string, ch chan interface{}, st subType) {
+func (reg *registry) add(topic string, ch goCommsDefinitions.IPubSubBag, st subType) {
 	if reg.topics[topic] == nil {
-		reg.topics[topic] = make(map[chan interface{}]subType)
+		reg.topics[topic] = make(map[goCommsDefinitions.IPubSubBag]subType)
 	}
 	reg.topics[topic][ch] = st
 
@@ -202,7 +223,7 @@ func (reg *registry) add(topic string, ch chan interface{}, st subType) {
 
 func (reg *registry) send(topic string, msg interface{}) {
 	for ch, st := range reg.topics[topic] {
-		ch <- msg
+		ch.Add(msg)
 		switch st {
 		case onceAny:
 			for topic := range reg.revTopics[ch] {
@@ -214,23 +235,20 @@ func (reg *registry) send(topic string, msg interface{}) {
 	}
 }
 
-func (reg *registry) sendNoWait(topic string, msg interface{}) {
-	for ch, st := range reg.topics[topic] {
-		select {
-		case ch <- msg:
-			switch st {
-			case onceAny:
-				for topic := range reg.revTopics[ch] {
-					reg.remove(topic, ch)
-				}
-			case onceEach:
-				reg.remove(topic, ch)
-			}
-		default:
-		}
-
-	}
-}
+//func (reg *registry) sendNoWait(topic string, msg interface{}) {
+//	for ch, st := range reg.topics[topic] {
+//		if ch.addNoWait(msg) {
+//			switch st {
+//			case onceAny:
+//				for topic := range reg.revTopics[ch] {
+//					reg.remove(topic, ch)
+//				}
+//			case onceEach:
+//				reg.remove(topic, ch)
+//			}
+//		}
+//	}
+//}
 
 func (reg *registry) removeTopic(topic string) {
 	for ch := range reg.topics[topic] {
@@ -238,13 +256,13 @@ func (reg *registry) removeTopic(topic string) {
 	}
 }
 
-func (reg *registry) removeChannel(ch chan interface{}) {
+func (reg *registry) removeChannel(ch goCommsDefinitions.IPubSubBag) {
 	for topic := range reg.revTopics[ch] {
 		reg.remove(topic, ch)
 	}
 }
 
-func (reg *registry) remove(topic string, ch chan interface{}) {
+func (reg *registry) remove(topic string, ch goCommsDefinitions.IPubSubBag) {
 	if _, ok := reg.topics[topic]; !ok {
 		return
 	}
@@ -261,7 +279,7 @@ func (reg *registry) remove(topic string, ch chan interface{}) {
 	}
 
 	if len(reg.revTopics[ch]) == 0 {
-		close(ch)
+		ch.Close()
 		delete(reg.revTopics, ch)
 	}
 }
