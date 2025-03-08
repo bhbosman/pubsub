@@ -3,7 +3,7 @@ module github.com/cskr/pubsub
 go 1.24.0
 
 require (
-	github.com/bhbosman/goCommsDefinitions v0.0.0-20250308074916-3e7c0d32b971
+	github.com/bhbosman/goCommsDefinitions v0.0.0-20250308144130-64993b60920c
 	github.com/reactivex/rxgo/v2 v2.5.0
 )
 
